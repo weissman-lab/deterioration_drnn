@@ -1,0 +1,113 @@
+---
+title: "Generating Pseudodata from UPHS Sepsis Dataset"
+author: "parths"
+date: "5/28/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/project/hipaa_garywlab/proj/sae/fulldata/")
+```
+
+This markdown file prepares semi-realistic deidentified pseudodata that has similar characteristics as the UPHS sepsis dataset, which may be shared publicly on Github.  
+    
+Set-up
+```{r}
+gc()
+
+#Variables used in DRNN model
+tar_sel = c("TIME_DAY", "WEEK_DAY", "AGE", "GENDER", "RACE_BLACK", "RACE_ASIAN", "RACE_OTHER", "RACE_UNKNOWN", "ICU_DISCHARGE", "SURGERY", "OBGYN", "LACTATE_RESULT", "HEART_RATE", "SYSTOLIC_BP", "TEMPERATURE", "RESPIRATORY_RATE", "SOFA_RESP_SUPPORT_FLAG", "SOFA_RESP_SPO2", "SOFA_PLATELET_RESULT", "SOFA_CREATININE_RESULT", "SOFA_BILIRUBIN_RESULT", "SOFA_CVS_MAP_RESULT", "SOFA_CNS_GLASGOW_RESULT", "SOFA_URINE_OUTPUT_24HR", "BLOOD_CULTURE_DRAWN_FLAG", "TEMPERATURE_24HR_MAX", "TEMPERATURE_24HR_MIN", "SYSTOLIC_BP_24HR_MAX", "SYSTOLIC_BP_24HR_MIN", "HEART_RATE_24HR_MAX", "HEART_RATE_24HR_MIN", "RESPIRATORY_RATE_24HR_MAX", "RESPIRATORY_RATE_24HR_MIN", "SOFA_RESP_SPO2_24HR_MIN", "SOFA_PLATELET_RESULT_24HR_MIN", "SOFA_BILIRUBIN_RESULT_24HR_MAX", "SOFA_CVS_MAP_RESULT_24HR_MIN", "SOFA_CNS_GLASGOW_RESULT_24HR_MIN", "SOFA_CREATININE_RESULT_24HR_MAX", "LACTATE_RESULT_28HR", "TEMPERATURE_72HR_MAX", "TEMPERATURE_72HR_MIN", "SYSTOLIC_BP_72HR_MAX", "SYSTOLIC_BP_72HR_MIN", "HEART_RATE_72HR_MAX", "HEART_RATE_72HR_MIN", "RESPIRATORY_RATE_72HR_MAX", "RESPIRATORY_RATE_72HR_MIN", "SOFA_RESP_SPO2_72HR_MIN", "SOFA_PLATELET_RESULT_72HR_MIN", "SOFA_BILIRUBIN_RESULT_72HR_MAX", "SOFA_CVS_MAP_RESULT_72HR_MIN", "SOFA_CNS_GLASGOW_RESULT_72HR_MIN", "SOFA_CREATININE_RESULT_72HR_MAX", "LACTATE_RESULT_FREQ", "TEMPERATURE_FREQ", "RESPIRATORY_RATE_FREQ", "SYSTOLIC_BP_FREQ", "HEART_RATE_FREQ", "GRAM_POS", "GRAM_NEG")
+
+#Model: trained LSTM => dense1 => dense2 => dense3 => dense4
+window = 6 #How many hours to look back to generate prediction
+step = 1 #How many hours to slide forward after each window
+pred_window = 6 #How many hours ahead to predict
+which_model = "/project/garywlab/sae/drnn_final_model_2020-145-1316.h5" #path to final model
+
+library(data.table)
+library(keras)
+library(tensorflow)
+library(reticulate)
+library(zoo)
+library(ggsci)
+set.seed(10)
+k_clear_session() #clean up clutter from old models
+```
+  
+Prepare data for DRNN model
+```{r}
+drnn_data = fread("drnn_data_2020-05-28.txt") #import data
+
+drnn_data_matrix = data.matrix(drnn_data) #transform to matrix
+data_means <- apply(drnn_data_matrix[, -1], 2, mean)
+data_std <- apply(drnn_data_matrix[, -1], 2, sd)
+  data_std[data_std==0] = 1 #replace standard deviation of 0 with non-zero
+drnn_data_matrix[, -1] <- scale(drnn_data_matrix[, -1], center = data_means, scale = data_std) #normalize data to variable mean/sd
+
+#hour-level indices to indicate model inputs, to prevent data overlap across different patients
+pat_breaks = match(unique(drnn_data_matrix[,1]), drnn_data_matrix[,1])
+pat_indices = c()
+for (p in 1:length(pat_breaks)){
+  if (p == length(pat_breaks)) { #For last patient encounter
+    pat_indices = c(pat_indices, seq((pat_breaks[p] + window), (nrow(drnn_data_matrix))))
+  } else {
+    pat_indices = c(pat_indices, seq((pat_breaks[p] + window), (pat_breaks[p+1])))
+  }
+}
+pat_indices = pat_indices[seq(1, length(pat_indices), step)]
+
+#prepare data for input into DRNN: dim = (n) by (6 hours) by (number of variables) 
+encoder_inputs_data <- array(0, dim = c(length(pat_indices), window,  dim(drnn_data_matrix[,-1])[[-1]])) #Dim = batch_size by window by vars
+for (j in 1:length(pat_indices)) {
+  enc_indices <- seq(pat_indices[[j]] - window, pat_indices[[j]]- 1, length.out = window) #Indices for encoder input observations for window j
+  encoder_inputs_data[j,,] <- drnn_data_matrix[enc_indices, -1] #Sample j
+}
+```
+  
+Get DRNN predictions
+```{r}
+drnn_model <- load_model_hdf5(which_model)
+summary(drnn_model)
+drnn_predictions = predict(drnn_model, encoder_inputs_data)
+drnn_data[pat_indices, DRNN := drnn_predictions] #add drnn model predictions to data table
+```
+  
+Patient vignettes
+```{r}
+setwd("/project/garywlab/sae/")
+dir.create("vignettes")
+setwd("/project/garywlab/sae/drnn_vignettes/")
+model_thresh = 0.025
+drnn_data[, HOUR_NUMBER := 1:.N, by = PAT_ENC_CSN]
+
+for (i in 1:drnn_data[,length(unique(PAT_ENC_CSN))])
+{
+  png(sprintf("%i_vignette_rplot.png", i),  
+      units="in", 
+      width=6, 
+      height=6, 
+      pointsize=8,  
+      res=600)
+  m <- rbind(1, 1, 2, 2, 2)
+  layout(m)
+  par(cex = 1, mar = c(1, 4, 0, 0), oma = c(3, 4, 2, 0), mgp = c(2, 1, 0))
+  
+  #DRNN
+  drnn_data[PAT_ENC_CSN == i, plot(max(HOUR_NUMBER) - HOUR_NUMBER, DRNN, type = "l", col = pal_jama("default")(4)[1], ylim = c(0, 0.14), xlim = rev(range(HOUR_NUMBER)), xaxt='n', ylab = "DRNN output")]
+  Axis(side=1, labels=FALSE)
+  abline(h = model_thresh, col = "gray50", lty = 1)
+  legend("topleft", inset = 0.02, legend = "DRNN", col = pal_jama("default")(4)[1], lty = 1, cex = 0.8)
+        
+  #Vitals
+  drnn_data[PAT_ENC_CSN == i, plot(max(HOUR_NUMBER) - HOUR_NUMBER, HEART_RATE, type = "l", col = "purple", , xlim = rev(range(HOUR_NUMBER)), ylim = c(0, 200), xaxt='n', ylab = "Vital signs")]
+  Axis(side=1, labels=TRUE)
+  drnn_data[PAT_ENC_CSN == i, lines(HOUR_NUMBER, SYSTOLIC_BP, type = "l", col = "blue")]
+  drnn_data[PAT_ENC_CSN == i, lines(HOUR_NUMBER, SOFA_RESP_SPO2, type = "l", col = "green")]
+  drnn_data[PAT_ENC_CSN == i, lines(HOUR_NUMBER, (TEMPERATURE - 32)*5/9, type = "l", col = "orange")]
+  legend("topleft", inset = 0.02, horiz = TRUE, legend = c("HR (bpm)", "SBP (mmHg)", "SPO2 (%)", "Temp (C)"), col = c("purple", "blue", "green", "orange"), lty = 1, cex = 0.8)
+  title(xlab = "Hours before end of encounter", outer = TRUE, line = 1)
+  
+  dev.off()
+}
+```
