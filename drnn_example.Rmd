@@ -7,7 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "/project/hipaa_garywlab/proj/sae/fulldata/")
+knitr::opts_knit$set(root.dir = "/weissman-lab/deterioration_drnn/")
 ```
 
 This markdown file prepares semi-realistic deidentified pseudodata that has similar characteristics as the UPHS sepsis dataset, which may be shared publicly on Github.  
@@ -23,7 +23,7 @@ tar_sel = c("TIME_DAY", "WEEK_DAY", "AGE", "GENDER", "RACE_BLACK", "RACE_ASIAN",
 window = 6 #How many hours to look back to generate prediction
 step = 1 #How many hours to slide forward after each window
 pred_window = 6 #How many hours ahead to predict
-which_model = "/project/garywlab/sae/drnn_final_model_2020-145-1316.h5" #path to final model
+which_model = "drnn_final_model_2020-145-1316.h5" #path to final model
 
 library(data.table)
 library(keras)
@@ -75,9 +75,8 @@ drnn_data[pat_indices, DRNN := drnn_predictions] #add drnn model predictions to 
   
 Patient vignettes
 ```{r}
-setwd("/project/garywlab/sae/")
-dir.create("vignettes")
-setwd("/project/garywlab/sae/drnn_vignettes/")
+dir.create("drnn_vignettes")
+setwd("/weissman-lab/deterioration_drnn/drnn_vignettes/")
 model_thresh = 0.025
 drnn_data[, HOUR_NUMBER := 1:.N, by = PAT_ENC_CSN]
 
