@@ -7,7 +7,6 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "/weissman-lab/deterioration_drnn/")
 ```
 
 This markdown file prepares semi-realistic deidentified pseudodata that has similar characteristics as the UPHS sepsis dataset, which may be shared publicly on Github.  
@@ -76,7 +75,7 @@ drnn_data[pat_indices, DRNN := drnn_predictions] #add drnn model predictions to 
 Patient vignettes
 ```{r}
 dir.create("drnn_vignettes")
-setwd("/weissman-lab/deterioration_drnn/drnn_vignettes/")
+setwd("drnn_vignettes/")
 model_thresh = 0.025
 drnn_data[, HOUR_NUMBER := 1:.N, by = PAT_ENC_CSN]
 
